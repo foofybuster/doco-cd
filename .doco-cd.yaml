@@ -9,4 +9,3 @@ reference: refs/heads/main
 working_dir: test2
 compose_files:
   - test.compose.yaml
-
