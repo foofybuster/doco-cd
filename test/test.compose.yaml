@@ -8,6 +8,6 @@ services:
     volumes:
       - ./:/usr/share/nginx/html
     environment:
-      Foo: "Fy"
+      Foo: "Fyfy"
 
 
