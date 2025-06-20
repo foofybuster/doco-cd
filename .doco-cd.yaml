@@ -1,12 +1,14 @@
 name: test
 reference: refs/heads/main
 working_dir: test
+force_recreate: true
 compose_files:
   - test.compose.yaml
 ---
 name: test2
 reference: refs/heads/main
 working_dir: test2
+force_recreate: true
 compose_files:
   - test.compose.yaml
 
