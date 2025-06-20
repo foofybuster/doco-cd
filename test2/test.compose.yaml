@@ -4,6 +4,6 @@ services:
     container_name: test2
     image: nginx:latest
     ports:
-      - "8000:80"  # use random published port
+      - "8089:80"  # use random published port
     volumes:
       - ./:/usr/share/nginx/html
