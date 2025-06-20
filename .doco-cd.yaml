@@ -1,1 +1,11 @@
-
+name: test-deploy
+repository_url: https://github.com/foofybuster/doco-cd.git
+working_dir: test
+compose_files:
+  - test.compose.yaml
+---
+name: test-deploy2
+repository_url: https://github.com/foofybuster/doco-cd.git
+working_dir: test2
+compose_files:
+  - test.compose.yaml
