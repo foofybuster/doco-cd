@@ -20,6 +20,4 @@ services:
 
 volumes:
   data:
-
-
   
