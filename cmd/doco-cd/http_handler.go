@@ -55,7 +55,7 @@ func getRepoName(cloneURL string) string {
 }
 
 // HandleEvent handles the incoming webhook event
-func HandleEvent(ctx context.Context, jobLog *slog.Logger, w http.ResponseWriter, appConfig *config.AppConfig, dataMountPoint container.MountPoint, payload webhook.ParsedPayload, customTarget, jobID string, dockerCli command.Cli, dockerClient *client.Client) {
+func HandleEvent(ctx context.Context, jobLog *slog.Logger, w http.ResponseWriter, appConfig *config.AppConfig, dataMountPoint container.MountPoint, payload webhook.ParsedPayload, customTarget, jobID string, dockerManager *docker.ClientManager, fallbackInstanceName string) {
 	startTime := time.Now()
 	repoName := getRepoName(payload.CloneURL)
 
@@ -138,6 +138,24 @@ func HandleEvent(ctx context.Context, jobLog *slog.Logger, w http.ResponseWriter
 	}
 
 	for _, deployConfig := range deployConfigs {
+		// Select Docker instance based on deployment config, fallback to URL/header selection
+		dockerInstanceName := fallbackInstanceName
+		if deployConfig.DockerInstance != "" {
+			dockerInstanceName = deployConfig.DockerInstance
+		}
+		
+		// Get the appropriate Docker instance
+		dockerInstance, err := dockerManager.GetInstance(dockerInstanceName)
+		if err != nil {
+			onError(w, jobLog.With(logger.ErrAttr(err)), fmt.Sprintf("Docker instance not found: %s", dockerInstanceName), err.Error(), jobID, http.StatusBadRequest)
+			return
+		}
+		
+		// Update job log with the selected Docker instance
+		jobLog = jobLog.With(slog.String("docker_instance", dockerInstance.Name))
+		dockerCli := dockerInstance.CLI
+		dockerClient := dockerInstance.APIClient
+		
 		repoName = getRepoName(payload.CloneURL)
 		if deployConfig.RepositoryUrl != "" {
 			repoName = getRepoName(string(deployConfig.RepositoryUrl))
@@ -366,7 +384,7 @@ func (h *handlerData) WebhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	HandleEvent(ctx, jobLog, w, h.appConfig, h.dataMountPoint, payload, customTarget, jobID, dockerInstance.CLI, dockerInstance.APIClient)
+	HandleEvent(ctx, jobLog, w, h.appConfig, h.dataMountPoint, payload, customTarget, jobID, h.dockerManager, dockerInstanceName)
 }
 
 func (h *handlerData) HealthCheckHandler(w http.ResponseWriter, _ *http.Request) {
