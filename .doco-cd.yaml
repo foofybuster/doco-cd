@@ -1,11 +1,6 @@
 name: test-deploy
 reference: refs/heads/main
-working_dir: test
-compose_files:
-  - test.compose.yaml
----
-name: test-deploy-2
-reference: refs/heads/main
+docker_instance: "remote-kpat2"  # Target specific instance
 working_dir: test
 compose_files:
   - test.compose.yaml
