@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -29,8 +30,7 @@ type handlerData struct {
 	appConfig      *config.AppConfig    // Application configuration
 	appVersion     string               // Application version
 	dataMountPoint container.MountPoint // Mount point for the data directory
-	dockerCli      command.Cli          // Docker CLI client
-	dockerClient   *client.Client       // Docker client
+	dockerManager  *docker.ClientManager // Docker client manager for multi-instance support
 	log            *logger.Logger       // Logger for logging messages
 }
 
@@ -313,10 +313,26 @@ func (h *handlerData) WebhookHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
 	customTarget := r.PathValue("customTarget")
+	
+	// Extract Docker instance name from request
+	dockerInstanceName := h.extractDockerInstance(r)
+	
+	// Get the appropriate Docker instance
+	dockerInstance, err := h.dockerManager.GetInstance(dockerInstanceName)
+	if err != nil {
+		h.log.Error("Failed to get Docker instance", 
+			slog.String("instance", dockerInstanceName),
+			logger.ErrAttr(err))
+		http.Error(w, fmt.Sprintf("Docker instance not found: %s", dockerInstanceName), http.StatusBadRequest)
+		return
+	}
 
 	// Add job id to the context to track deployments in the logs
 	jobID := uuid.Must(uuid.NewRandom()).String()
-	jobLog := h.log.With(slog.String("job_id", jobID))
+	jobLog := h.log.With(
+		slog.String("job_id", jobID),
+		slog.String("docker_instance", dockerInstance.Name),
+	)
 
 	jobLog.Debug("received webhook event")
 
@@ -350,16 +366,74 @@ func (h *handlerData) WebhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	HandleEvent(ctx, jobLog, w, h.appConfig, h.dataMountPoint, payload, customTarget, jobID, h.dockerCli, h.dockerClient)
+	HandleEvent(ctx, jobLog, w, h.appConfig, h.dataMountPoint, payload, customTarget, jobID, dockerInstance.CLI, dockerInstance.APIClient)
 }
 
 func (h *handlerData) HealthCheckHandler(w http.ResponseWriter, _ *http.Request) {
-	err := docker.VerifySocketConnection()
-	if err != nil {
-		onError(w, h.log.With(logger.ErrAttr(err)), docker.ErrDockerSocketConnectionFailed.Error(), err.Error(), "", http.StatusServiceUnavailable)
-		return
+	ctx := context.Background()
+	
+	// Check all Docker instances
+	instancesStatus := h.dockerManager.GetInstancesStatus(ctx)
+	
+	allHealthy := true
+	for _, status := range instancesStatus {
+		if status.Status != "healthy" {
+			allHealthy = false
+			break
+		}
+	}
+	
+	if allHealthy {
+		response := map[string]interface{}{
+			"status": "healthy",
+			"instances": instancesStatus,
+		}
+		JSONResponse(w, response, "", http.StatusOK)
+	} else {
+		response := map[string]interface{}{
+			"status": "unhealthy",
+			"instances": instancesStatus,
+		}
+		JSONResponse(w, response, "", http.StatusServiceUnavailable)
+	}
+}
+
+// extractDockerInstance extracts the Docker instance name from the request
+func (h *handlerData) extractDockerInstance(r *http.Request) string {
+	// Check URL path first: /v1/webhook/instance/{instance} or /v1/webhook/instance/{instance}/{customTarget}
+	if strings.HasPrefix(r.URL.Path, "/v1/webhook/instance/") {
+		pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/webhook/instance/"), "/")
+		if len(pathParts) > 0 && pathParts[0] != "" {
+			// Check if this is a valid instance name
+			if _, err := h.dockerManager.GetInstance(pathParts[0]); err == nil {
+				return pathParts[0]
+			}
+		}
 	}
 
-	h.log.Debug("health check successful")
-	JSONResponse(w, "healthy", "", http.StatusOK)
+	// Check X-Docker-Instance header
+	if instanceName := r.Header.Get("X-Docker-Instance"); instanceName != "" {
+		return instanceName
+	}
+
+	// Return empty string to use default instance
+	return ""
+}
+
+// extractCustomTarget extracts the custom target from the request path
+func (h *handlerData) extractCustomTarget(r *http.Request, dockerInstance string) string {
+	pathSuffix := strings.TrimPrefix(r.URL.Path, "/v1/webhook")
+
+	if dockerInstance != "" {
+		// Handle new route pattern: /v1/webhook/instance/{instance}/{customTarget}
+		if strings.HasPrefix(r.URL.Path, "/v1/webhook/instance/") {
+			pathSuffix = strings.TrimPrefix(pathSuffix, "/instance/"+dockerInstance)
+		} else {
+			// Legacy pattern: /v1/webhook/{instance}/{customTarget}
+			pathSuffix = strings.TrimPrefix(pathSuffix, "/"+dockerInstance)
+		}
+	}
+
+	// Remove leading slash and return the custom target
+	return strings.TrimPrefix(pathSuffix, "/")
 }

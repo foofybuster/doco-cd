@@ -1,0 +1,41 @@
+# Docker Instances Configuration for doco-cd
+# This file defines multiple Docker hosts that can be managed by a single doco-cd instance
+
+instances:
+  # Local Docker instance (default)
+  - name: "local"
+    host: "unix:///var/run/docker.sock"
+    default: true
+    labels:
+      environment: "development"
+      location: "local"
+
+  # Example remote Docker instance with TLS
+  - name: "remote-prod"
+    host: "tcp://prod-docker.example.com:2376"
+    tls_verify: true
+    tls_cert: "/certs/prod/cert.pem"
+    tls_key: "/certs/prod/key.pem"
+    tls_ca: "/certs/prod/ca.pem"
+    labels:
+      environment: "production"
+      location: "datacenter-1"
+
+  # Example staging environment
+  - name: "remote-staging"
+    host: "tcp://staging-docker.example.com:2376"
+    tls_verify: true
+    tls_cert: "/certs/staging/cert.pem"
+    tls_key: "/certs/staging/key.pem"
+    tls_ca: "/certs/staging/ca.pem"
+    labels:
+      environment: "staging"
+      location: "datacenter-2"
+
+  # Example development environment with SSH tunnel
+  - name: "dev-remote"
+    host: "tcp://localhost:2375"  # via SSH tunnel
+    tls_verify: false
+    labels:
+      environment: "development"
+      location: "remote"

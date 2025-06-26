@@ -11,7 +11,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/docker/docker/client"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/kimdre/doco-cd/internal/config"
 	"github.com/kimdre/doco-cd/internal/docker"
 	"github.com/kimdre/doco-cd/internal/logger"
@@ -100,66 +101,88 @@ func main() {
 	}()
 
 	// Test/verify the connection to the docker socket
-	err = docker.VerifySocketConnection()
-	if err != nil {
-		log.Critical(docker.ErrDockerSocketConnectionFailed.Error(), logger.ErrAttr(err))
-	}
+	log.Debug("initializing Docker client manager")
 
-	log.Debug("connection to docker socket was successful")
-
-	dockerCli, err := docker.CreateDockerCli(c.DockerQuietDeploy, !c.SkipTLSVerification)
+	dockerManager, err := docker.NewClientManager(c.DockerInstances, c.DockerQuietDeploy, c.SkipTLSVerification, log.Logger)
 	if err != nil {
-		log.Critical("failed to create docker client", logger.ErrAttr(err))
+		log.Critical("failed to create Docker client manager", logger.ErrAttr(err))
 		return
 	}
-	defer func(client client.APIClient) {
-		log.Debug("closing docker client")
-
-		err = client.Close()
-		if err != nil {
-			log.Error("failed to close docker client", logger.ErrAttr(err))
+	defer func() {
+		log.Debug("closing Docker client manager")
+		if err := dockerManager.Close(); err != nil {
+			log.Error("failed to close Docker client manager", logger.ErrAttr(err))
 		}
-	}(dockerCli.Client())
+	}()
 
-	log.Debug("docker client created")
+	// Verify connections to all Docker instances
+	ctx := context.Background()
+	err = dockerManager.VerifyAllConnections(ctx)
+	if err != nil {
+		log.Critical("failed to verify Docker connections", logger.ErrAttr(err))
+		return
+	}
 
-	dockerClient, _ := client.NewClientWithOpts(
-		client.FromEnv,
-		client.WithAPIVersionNegotiation(),
-	)
+	log.Debug("all Docker connections verified successfully")
+
+	// Get default instance for backward compatibility
+	defaultInstance, err := dockerManager.GetDefaultInstance()
+	if err != nil {
+		log.Critical("failed to get default Docker instance", logger.ErrAttr(err))
+		return
+	}
+
+	log.Debug("Docker client manager initialized",
+		slog.String("default_instance", defaultInstance.Name),
+		slog.Any("instances", dockerManager.ListInstances()))
 
 	log.Debug("negotiated docker versions to use",
 		slog.Group("versions",
-			slog.String("docker_client", dockerClient.ClientVersion()),
-			slog.String("docker_api", dockerCli.CurrentVersion()),
+			slog.String("docker_client", defaultInstance.APIClient.ClientVersion()),
+			slog.String("docker_api", defaultInstance.CLI.CurrentVersion()),
 		))
 
-	// Get container id of this application
+	// Get container id of this application (optional when not running in container)
+	var dataMountPoint container.MountPoint
 	appContainerID, err := getAppContainerID()
 	if err != nil {
-		log.Critical("failed to retrieve application container id", logger.ErrAttr(err))
-		return
-	}
+		log.Warn("failed to retrieve application container id (not running in container?)", logger.ErrAttr(err))
+		log.Info("continuing without container-specific features")
+		// Set default mount point for non-container execution
+		dataMountPoint = container.MountPoint{
+			Type:        mount.TypeBind,
+			Source:      "/tmp/doco-cd-data",
+			Destination: "/data",
+			RW:          true,
+		}
+	} else {
+		log.Debug("retrieved application container id", slog.String("container_id", appContainerID))
 
-	log.Debug("retrieved application container id", slog.String("container_id", appContainerID))
+		// Check if the application has a data mount point and get the host path
+		dataMountPoint, err = docker.GetMountPointByDestination(defaultInstance.APIClient, appContainerID, dataPath)
+		if err != nil {
+			log.Warn(fmt.Sprintf("failed to retrieve %s mount point for container %s", dataPath, appContainerID), logger.ErrAttr(err))
+			// Set default mount point as fallback
+			dataMountPoint = container.MountPoint{
+				Type:        mount.TypeBind,
+				Source:      "/tmp/doco-cd-data",
+				Destination: "/data",
+				RW:          true,
+			}
+		} else {
+			log.Debug("retrieved data mount point",
+				slog.Group("mount_point",
+					slog.String("source", dataMountPoint.Source),
+					slog.String("destination", dataMountPoint.Destination),
+				),
+			)
 
-	// Check if the application has a data mount point and get the host path
-	dataMountPoint, err := docker.GetMountPointByDestination(dockerClient, appContainerID, dataPath)
-	if err != nil {
-		log.Critical(fmt.Sprintf("failed to retrieve %s mount point for container %s", dataPath, appContainerID), logger.ErrAttr(err))
-	}
-
-	log.Debug("retrieved data mount point",
-		slog.Group("mount_point",
-			slog.String("source", dataMountPoint.Source),
-			slog.String("destination", dataMountPoint.Destination),
-		),
-	)
-
-	// Check if data mount point is writable
-	err = docker.CheckMountPointWriteable(dataMountPoint)
-	if err != nil {
-		log.Critical(fmt.Sprintf("failed to check if %s mount point is writable", dataPath), logger.ErrAttr(err))
+			// Check if data mount point is writable
+			err = docker.CheckMountPointWriteable(dataMountPoint)
+			if err != nil {
+				log.Warn(fmt.Sprintf("failed to check if %s mount point is writable", dataPath), logger.ErrAttr(err))
+			}
+		}
 	}
 
 	log.Debug("data mount point is writable")
@@ -168,13 +191,14 @@ func main() {
 		appConfig:      c,
 		appVersion:     Version,
 		dataMountPoint: dataMountPoint,
-		dockerCli:      dockerCli,
-		dockerClient:   dockerClient,
+		dockerManager:  dockerManager,
 		log:            log,
 	}
 
 	http.HandleFunc(webhookPath, h.WebhookHandler)
 	http.HandleFunc(webhookPath+"/{customTarget}", h.WebhookHandler)
+	http.HandleFunc("/v1/webhook/instance/{dockerInstance}", h.WebhookHandler)
+	http.HandleFunc("/v1/webhook/instance/{dockerInstance}/{customTarget}", h.WebhookHandler)
 
 	http.HandleFunc(healthPath, h.HealthCheckHandler)
 
@@ -186,7 +210,7 @@ func main() {
 
 	log.Debug("retrieving containers that are managed by doco-cd")
 
-	containers, err := docker.GetLabeledContainers(context.TODO(), dockerClient, docker.DocoCDLabels.Metadata.Manager, config.AppName)
+	containers, err := docker.GetLabeledContainers(context.Background(), defaultInstance.APIClient, docker.DocoCDLabels.Metadata.Manager, config.AppName)
 	if err != nil {
 		log.Error("failed to retrieve doco-cd containers", logger.ErrAttr(err))
 	}

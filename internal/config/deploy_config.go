@@ -47,6 +47,7 @@ type DeployConfig struct {
 		RemoveImages  bool `yaml:"remove_images" default:"true"`  // RemoveImages removes the images used by the deployment
 		RemoveRepoDir bool `yaml:"remove_dir" default:"true"`     // RemoveRepoDir removes the repository directory after the deployment is destroyed
 	} `yaml:"destroy_opts"` // DestroyOpts is the destroy options for the deployment
+	DockerInstance string `yaml:"docker_instance,omitempty"` // Target Docker instance name
 }
 
 // DefaultDeployConfig creates a DeployConfig with default values

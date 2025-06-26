@@ -1,0 +1,14 @@
+instances:
+  - name: "local"
+    host: "unix:///Users/accentix/.colima/default/docker.sock"
+    default: true
+    labels:
+      environment: "test"
+      location: "local"
+  
+  - name: "invalid-remote"
+    host: "tcp://invalid-host:2376"
+    tls_verify: false
+    labels:
+      environment: "test"
+      location: "remote"

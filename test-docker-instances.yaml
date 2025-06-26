@@ -1,0 +1,7 @@
+instances:
+  - name: "local"
+    host: "unix:///var/run/docker.sock"
+    default: true
+    labels:
+      environment: "development"
+      location: "local"

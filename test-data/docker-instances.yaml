@@ -1,0 +1,7 @@
+instances:
+  - name: "local"
+    host: "unix:///Users/accentix/.colima/default/docker.sock"
+    default: true
+    labels:
+      environment: "test"
+      location: "local"

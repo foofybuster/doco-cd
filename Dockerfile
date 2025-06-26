@@ -44,7 +44,7 @@ VOLUME /data
 COPY --from=build-stage /doco-cd /doco-cd
 # COPY --from=busybox-binaries /wget /usr/bin/wget
 
-ENV TZ=UTC \
+ENV TZ=Asia/Bangkok \
     HTTP_PORT=80 \
     LOG_LEVEL=info
 

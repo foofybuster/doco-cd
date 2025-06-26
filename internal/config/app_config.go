@@ -21,6 +21,8 @@ type AppConfig struct {
 	AuthType            string `env:"AUTH_TYPE,notEmpty" envDefault:"oauth2"`                        // AuthType is the type of authentication to use when cloning repositories
 	SkipTLSVerification bool   `env:"SKIP_TLS_VERIFICATION,notEmpty" envDefault:"false"`             // SkipTLSVerification skips the TLS verification when cloning repositories.
 	DockerQuietDeploy   bool   `env:"DOCKER_QUIET_DEPLOY,notEmpty" envDefault:"true"`                // DockerQuietDeploy suppresses the status output of dockerCli in deployments (e.g. pull, create, start)
+	DockerConfigFile    string `env:"DOCKER_CONFIG_FILE" envDefault:"/data/docker-instances.yaml"`   // DockerConfigFile is the path to the Docker instances configuration file
+	DockerInstances     *DockerConfig `validate:"-"` // DockerInstances holds the loaded Docker instances configuration
 }
 
 // GetAppConfig returns the configuration
@@ -45,6 +47,13 @@ func GetAppConfig() (*AppConfig, error) {
 	if err := validator.Validate(cfg); err != nil {
 		return nil, err
 	}
+
+	// Load Docker instances configuration
+	dockerConfig, err := LoadDockerConfig(cfg.DockerConfigFile)
+	if err != nil {
+		return nil, err
+	}
+	cfg.DockerInstances = dockerConfig
 
 	return &cfg, nil
 }

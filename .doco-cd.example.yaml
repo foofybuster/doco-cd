@@ -1,0 +1,31 @@
+# Example deployment configuration showing Docker instance targeting
+
+# Deploy to production Docker instance
+name: my-app-prod
+docker_instance: "remote-prod"  # Target specific Docker instance
+reference: main
+working_dir: .
+compose_files:
+  - docker-compose.prod.yaml
+force_image_pull: true
+force_recreate: false
+remove_orphans: true
+
+# You can also include build options
+build_opts:
+  force_image_pull: true
+  quiet: true
+  no_cache: false
+  args:
+    BUILD_ENV: production
+    API_URL: https://api.prod.example.com
+
+# Deployment hooks
+timeout: 300
+
+# Optional: destroy configuration
+destroy: false
+destroy_opts:
+  remove_volumes: false
+  remove_images: false
+  remove_repo_dir: false
