@@ -1,0 +1,16 @@
+instances:
+  # Local Docker instance (default)
+  - name: "local2"
+    host: "unix:///var/run/docker.sock"
+    labels:
+      environment: "development"
+      location: "local"
+
+  # Example remote Docker instance with TLS
+  - name: "remote-kpat2"
+    host: "tcp://10.148.0.62:2375"
+    default: true
+    tls_verify: false  # No TLS for local socket
+    labels:
+      environment: "kpat2"
+      location: "asia-southeast-1b"
